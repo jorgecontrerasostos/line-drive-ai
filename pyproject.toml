@@ -23,7 +23,14 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dependencies = []
+dependencies = [
+    "fastapi>=0.116.1",
+    "mlb-statsapi>=1.9.0",
+    "openai>=1.98.0",
+    "python-dotenv>=1.0.1",
+    "requests>=2.32.4",
+    "uvicorn>=0.33.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -137,4 +144,10 @@ exclude_lines = [
     "no cov",
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-cov>=5.0.0",
 ]

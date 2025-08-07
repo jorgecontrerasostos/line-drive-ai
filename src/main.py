@@ -1,10 +1,11 @@
-"""Main module for line-drive-ai."""
+from fastapi import FastAPI
+from src.api.routes import router
+
+app = FastAPI(title="Line Drive AI", description="Analyze MLB player performance")
+
+app.include_router(router)
 
 
-def main() -> None:
-    """Main function."""
-    print("Hello from line-drive-ai!")
-
-
-if __name__ == "__main__":
-    main()
+@app.get("/")
+def root():
+    return {"message": "Line Drive AI!"}

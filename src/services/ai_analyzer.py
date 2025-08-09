@@ -5,12 +5,14 @@ import logging
 from typing import Dict, Any
 from datetime import datetime
 
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 
-class BaseAnalyzer:
+class BaseballAnalyzer:
     def __init__(self):
         self.model = "gpt-4o"
         self.temperature = 0.7

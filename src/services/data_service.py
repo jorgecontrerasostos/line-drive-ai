@@ -103,7 +103,7 @@ class MLBDataService:
             player_info = raw_data.get("player_info", {})
 
             hitting_season = season_stats.get("hitting", {}).get("season", {})
-            hitting_recent = self._extract.recent_performance(game_log)
+            hitting_recent = self._extract_recent_performance(game_log)
 
             pitching_season = season_stats.get("pitching", {}).get("season", {})
 

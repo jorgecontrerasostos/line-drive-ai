@@ -88,7 +88,7 @@ def analyze_player(
         )
 
 
-@router.get("search/{query}")
+@router.get("/search/{query}")
 def search_players(query: str, limit: int = Query(5, ge=1, le=20)):
     """
     Search for players by name

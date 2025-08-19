@@ -36,7 +36,7 @@ class BaseballAnalyzer:
 
             prompt = self._create_analysis_prompt(player_name, player_data)
 
-            analysis = self.get_ai_response(prompt)
+            analysis = self._get_ai_response(prompt)
 
             if not analysis or len(analysis.strip()) < 50:
                 return self._generate_fallback_analysis(player_name)

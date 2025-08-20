@@ -151,3 +151,107 @@ class BaseballAnalyzer:
                 logger.warning(f"Rate limit hit (attempt {attempt + 1})")
                 if attempt == self.max_retries:
                     return "Analysis service temporarily busy - please try again in a moment"
+                    
+            except Exception as e:
+                logger.error(f"Unexpected error in AI response (attempt {attempt + 1}): {e}")
+                if attempt == self.max_retries:
+                    return "Analysis service error - please try again later"
+        
+        return "Unable to generate analysis after multiple attempts"
+
+    def _answer_baseball_question(self, question: str) -> str:
+        """
+        Answer natural language questions about baseball players by:
+        1. Parsing the question to extract player names and requested stats
+        2. Fetching relevant player data 
+        3. Providing a direct answer
+        """
+        try:
+            # Import here to avoid circular imports
+            from src.services.data_service import MLBDataService
+            import re
+            
+            data_service = MLBDataService()
+            
+            # Simple regex to find player names in common formats
+            player_patterns = [
+                r'aaron judge', r'mike trout', r'shohei ohtani', r'mookie betts',
+                r'ronald acuna', r'vladimir guerrero', r'juan soto', r'freddie freeman',
+                r'jose altuve', r'manny machado', r'fernando tatis', r'corey seager'
+            ]
+            
+            found_players = []
+            question_lower = question.lower()
+            
+            for pattern in player_patterns:
+                if pattern in question_lower:
+                    found_players.append(pattern.title())
+            
+            # If no known players found, try to extract any capitalized names
+            if not found_players:
+                name_matches = re.findall(r'[A-Z][a-z]+ [A-Z][a-z]+', question)
+                found_players = name_matches[:2]  # Limit to 2 players max
+            
+            if not found_players:
+                return "I couldn't identify any player names in your question. Please mention a specific player like 'Aaron Judge' or 'Mike Trout'."
+            
+            # Fetch data for the identified players
+            player_data = {}
+            for player_name in found_players:
+                data = data_service.get_player_data(player_name)
+                if data:
+                    player_data[player_name] = data
+            
+            if not player_data:
+                return f"I couldn't find data for the players mentioned: {', '.join(found_players)}"
+            
+            # For now, provide direct answers without AI to avoid timeout issues
+            # Later we can add back the AI processing
+            
+            if len(player_data) == 1:
+                player_name = list(player_data.keys())[0]
+                data = player_data[player_name]
+                season_stats = data.get('season_stats', 'N/A')
+                
+                # Extract specific stats based on question keywords
+                if any(keyword in question_lower for keyword in ['hr', 'home run', 'homer']):
+                    # Extract HR count from season stats
+                    import re
+                    hr_match = re.search(r'(\d+) HR', season_stats)
+                    if hr_match:
+                        hr_count = hr_match.group(1)
+                        return f"{player_name} has {hr_count} home runs this season (2025). Full stats: {season_stats}"
+                
+                elif any(keyword in question_lower for keyword in ['avg', 'average', 'batting']):
+                    avg_match = re.search(r'(\.\d+) avg', season_stats)
+                    if avg_match:
+                        avg = avg_match.group(1)
+                        return f"{player_name} is batting {avg} this season. Full stats: {season_stats}"
+                
+                elif any(keyword in question_lower for keyword in ['rbi', 'runs batted']):
+                    rbi_match = re.search(r'(\d+) RBI', season_stats)
+                    if rbi_match:
+                        rbi = rbi_match.group(1)
+                        return f"{player_name} has {rbi} RBIs this season. Full stats: {season_stats}"
+                
+                # Default response with all stats
+                return f"Here are {player_name}'s current stats: {season_stats}. Recent performance: {data.get('recent_games', 'N/A')}"
+            
+            else:
+                # Multiple players - provide comparison
+                result = "Here are the stats for the players mentioned:\n\n"
+                for player_name, data in player_data.items():
+                    result += f"{player_name}: {data.get('season_stats', 'N/A')}\n"
+                return result
+            
+        except Exception as e:
+            logger.error(f"Error answering question: {e}")
+            return f"I encountered an error trying to answer your question: {str(e)}"
+
+    def _generate_fallback_analysis(self, player_name: str) -> str:
+        """Generate fallback analysis when data is insufficient"""
+        return f"Unable to provide detailed analysis for {player_name} due to insufficient data. Please try again later."
+    
+    def _generate_error_analysis(self, player_name: str, error: str) -> str:
+        """Generate error analysis when something goes wrong"""
+        return f"Error analyzing {player_name}: {error}. Please try again or contact support if the issue persists."

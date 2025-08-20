@@ -268,6 +268,38 @@ def health_check():
         )
 
 
+@router.post("/chat")
+def chat_about_baseball(question: str):
+    """
+    Answer natural language questions about baseball players
+    
+    Examples:
+    - "How many home runs does Aaron Judge have?"
+    - "What's Mike Trout's batting average?"
+    - "Who has more RBIs, Judge or Trout?"
+    """
+    try:
+        # Use AI to parse the question and extract player names and stats
+        response = analyzer._answer_baseball_question(question)
+        
+        return {
+            "question": question,
+            "answer": response,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        
+    except Exception as e:
+        logger.error(f"Error answering question '{question}': {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Unable to answer question",
+                "question": question,
+                "message": str(e)
+            }
+        )
+
+
 @router.get("/")
 def root():
     """
@@ -282,6 +314,7 @@ def root():
             "search": "/search/{query} - Search for players",
             "compare": "/compare/{player1}/{player2} - Compare two players",
             "roster": "/team/{team_name}/roster - Get team roster",
+            "chat": "/chat - Answer natural language questions about players",
             "health": "/health - API health check",
         },
         "data_source": "MLB Official Stats API",

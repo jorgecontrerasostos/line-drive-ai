@@ -16,7 +16,7 @@ class MLBDataService:
     def get_player_data(self, player_name: str) -> Optional[Dict]:
         try:
             cache_key = f"player_{player_name.lower().strip()}"
-            if self.is_cached_and_fresh(cache_key):
+            if self._is_cached_and_fresh(cache_key):
                 return self.cache[cache_key]["data"]
 
             player_id = self._get_player_id(player_name)
@@ -68,6 +68,17 @@ class MLBDataService:
 
         return list(set(variations))
 
+    def _get_team_id_from_name(self, team_name: str) -> Optional[int]:
+        """Get team ID from team name"""
+        team_id_map = {
+            "Los Angeles Angels": 108,
+            "Los Angeles Dodgers": 119,
+            "New York Yankees": 147,
+            "Boston Red Sox": 111,
+            # Add more teams as needed
+        }
+        return team_id_map.get(team_name)
+
     def _fetch_player_stats(self, player_id: int) -> Optional[Dict]:
         try:
             # Get current season stats
@@ -83,13 +94,18 @@ class MLBDataService:
             except:
                 game_log = None
 
-            # Get player info
-            player_info = statsapi.lookup_player("", player_id)
+            # Get player info - reconstruct from season_stats data which is more reliable
+            player_info = {
+                "id": season_stats.get("id"),
+                "fullName": f"{season_stats.get('first_name', '')} {season_stats.get('last_name', '')}".strip(),
+                "primaryPosition": {"abbreviation": season_stats.get("position", "")},
+                "currentTeam": {"name": season_stats.get("current_team", ""), "id": self._get_team_id_from_name(season_stats.get("current_team", ""))}
+            }
 
             return {
                 "season_stats": season_stats,
                 "game_log": game_log,
-                "player_info": player_info[0] if player_info else None,
+                "player_info": player_info,
             }
 
         except Exception as e:
@@ -102,27 +118,51 @@ class MLBDataService:
             game_log = raw_data.get("game_log", {})
             player_info = raw_data.get("player_info", {})
 
-            hitting_season = season_stats.get("hitting", {}).get("season", {})
-            hitting_recent = self._extract_recent_performance(game_log)
+            # Extract hitting stats from the new API structure
+            hitting_season = {}
+            pitching_season = {}
+            
+            if season_stats and 'stats' in season_stats:
+                for stat_group in season_stats['stats']:
+                    if stat_group.get('group') == 'hitting':
+                        hitting_season = stat_group.get('stats', {})
+                    elif stat_group.get('group') == 'pitching':
+                        pitching_season = stat_group.get('stats', {})
 
-            pitching_season = season_stats.get("pitching", {}).get("season", {})
+            # Get team ID and player ID for recent performance
+            # First try from player_info (lookup result), then from season_stats
+            team_id = None
+            player_id = None
+            
+            if player_info:
+                team_id = player_info.get("currentTeam", {}).get("id")
+                player_id = player_info.get("id")
+            
+            # If not found in player_info, check season_stats which has the MLB API data
+            if not team_id and season_stats:
+                player_id = season_stats.get("id")
+                # Team ID 108 is Angels (hardcoded for now, could be improved)
+                if season_stats.get("current_team") == "Los Angeles Angels":
+                    team_id = 108
+            
+            hitting_recent = self._extract_recent_performance(player_id, team_id) if player_id and team_id else {}
 
-            is_pitcher = bool(pitching_season.get("games_pitched", 0) > 0)
+            is_pitcher = bool(pitching_season.get("gamesStarted", 0) > 0 or pitching_season.get("appearances", 0) > 0)
 
             formatted_data = {
                 "recent_games": self._format_recent_games(hitting_recent, is_pitcher),
                 "season_stats": self._format_season_stats(
                     hitting_season, pitching_season, is_pitcher
                 ),
-                "context": self._generate_context(player_info, hitting_season, pitching_season),
+                "context": self._generate_context(season_stats, hitting_season, pitching_season),
                 "advanced": self._format_advanced_metrics(
                     hitting_season, hitting_recent, is_pitcher
                 ),
                 "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "player_info": {
-                    "position": player_info.get("primaryPosition", {}).get("abbreviation", "N/A"),
-                    "team": player_info.get("primaryPosition", {}).get("name", "N/A"),
-                    "age": self._calculate_age(player_info.get("birthDate", "")),
+                    "position": season_stats.get("position", player_info.get("primaryPosition", {}).get("abbreviation", "N/A")),
+                    "team": season_stats.get("current_team", player_info.get("currentTeam", {}).get("name", "N/A")),
+                    "age": hitting_season.get("age", self._calculate_age(player_info.get("birthDate", ""))),
                 },
             }
 
@@ -140,22 +180,58 @@ class MLBDataService:
                 "player_info": {"position": "N/A", "team": "N/A", "age": "N/A"},
             }
 
-    def _extract_recent_performance(self, game_log: Optional[Dict]) -> Dict:
-        if not game_log or "hitting" not in game_log:
-            return {}
-
+    def _extract_recent_performance(self, player_id: int, team_id: int) -> Dict:
+        """Extract recent game performance using schedule + boxscore data"""
         try:
-            recent_games = game_log["hitting"]["gameLog"][:15]
+            # Get recent games for the player's team
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=21)  # Last 3 weeks
+            
+            schedule = statsapi.schedule(
+                start_date=start_date.strftime('%Y-%m-%d'),
+                end_date=end_date.strftime('%Y-%m-%d'),
+                team=team_id
+            )
+            
+            recent_games = []
+            for game in schedule[-10:]:  # Last 10 games
+                try:
+                    game_id = game['game_id']
+                    boxscore = statsapi.boxscore_data(game_id)
+                    
+                    # Determine if player's team was home or away
+                    is_away = game.get('away_id') == team_id
+                    batters = boxscore.get('awayBatters', []) if is_away else boxscore.get('homeBatters', [])
+                    
+                    # Find the player in the game
+                    for batter in batters:
+                        if batter.get('personId') == player_id:
+                            game_stats = {
+                                'date': game['game_date'],
+                                'ab': int(batter.get('ab', 0)),
+                                'h': int(batter.get('h', 0)),
+                                'hr': int(batter.get('hr', 0)),
+                                'rbi': int(batter.get('rbi', 0)),
+                                'bb': int(batter.get('bb', 0)),
+                                'k': int(batter.get('k', 0))
+                            }
+                            recent_games.append(game_stats)
+                            break
+                except Exception as e:
+                    logger.warning(f"Error getting boxscore for game {game_id}: {e}")
+                    continue
+            
             if not recent_games:
                 return {}
-
-            total_ab = sum(game.get("atBats", 0) for game in recent_games)
-            total_hits = sum(game.get("hits", 0) for game in recent_games)
-            total_hr = sum(game.get("homeRuns", 0) for game in recent_games)
-            total_rbi = sum(game.get("runsBattedIn", 0) for game in recent_games)
-
+            
+            # Calculate totals from recent games
+            total_ab = sum(game['ab'] for game in recent_games)
+            total_hits = sum(game['h'] for game in recent_games)
+            total_hr = sum(game['hr'] for game in recent_games)
+            total_rbi = sum(game['rbi'] for game in recent_games)
+            
             avg = round(total_hits / total_ab, 3) if total_ab > 0 else 0
-
+            
             return {
                 "games": len(recent_games),
                 "avg": avg,
@@ -164,20 +240,22 @@ class MLBDataService:
                 "hits": total_hits,
                 "ab": total_ab,
             }
+            
         except Exception as e:
             logger.error(f"Error extracting recent performance: {e}")
+            return {}
 
     def _format_recent_games(self, recent_data: Dict, is_pitcher: bool) -> str:
         if not recent_data:
-            return "No recent games data available"
+            return "Recent game data not available"
 
         games = recent_data.get("games", 0)
 
         if games == 0:
-            return "No recent games data available"
+            return "No recent games found"
 
         if is_pitcher:
-            return "Player is a pitcher, no recent games data available"
+            return "Recent pitching game data not yet implemented"
         else:
             avg = recent_data.get("avg", 0)
             hr = recent_data.get("hr", 0)
@@ -185,7 +263,7 @@ class MLBDataService:
             hits = recent_data.get("hits", 0)
             ab = recent_data.get("ab", 0)
 
-            return f"Last {games} games: .{int(avg*1000):03d} avg, {hr} HR, {rbi} RBI {hits} hits, {ab} AB"
+            return f"Last {games} games: .{int(avg*1000):03d} avg, {hr} HR, {rbi} RBI, {hits}/{ab} H/AB"
 
     def _format_season_stats(self, hitting: Dict, pitching: Dict, is_pitcher: bool) -> str:
         current_year = datetime.now().year
@@ -203,11 +281,16 @@ class MLBDataService:
             return f"Season {current_year}: {wins}-{losses}, {era} ERA, {innings} IP, {strikeouts} K, {walks} BB, {hits} H, {earned_runs} ER"
 
         elif hitting:
-            avg = hitting.get("avg", 0)
+            avg = hitting.get("avg", "0")
             hr = hitting.get("homeRuns", 0)
             rbi = hitting.get("rbi", 0)
             games = hitting.get("gamesPlayed", 0)
-            return f"{current_year}: .{int(float(avg)*1000):03d} avg, {hr} HR, {rbi} RBI in {games} games"
+            # Handle avg as string (e.g., ".235") or convert to proper format
+            if isinstance(avg, str) and avg.startswith('.'):
+                avg_display = avg
+            else:
+                avg_display = f".{int(float(avg)*1000):03d}" if avg else ".000"
+            return f"{current_year}: {avg_display} avg, {hr} HR, {rbi} RBI in {games} games"
 
         return f"{current_year}: Statistics unavailable"
 
@@ -215,14 +298,19 @@ class MLBDataService:
         """Generate contextual information about the player"""
         contexts = []
 
-        # Team info
-        team = player_info.get("currentTeam", {}).get("name", "")
+        # Team info - use the top-level team info from player_info
+        team = player_info.get("current_team", "")
         if team:
             contexts.append(f"Currently with {team}")
 
         # Performance context
         if hitting:
-            avg = float(hitting.get("avg", 0))
+            avg_str = hitting.get("avg", "0")
+            # Handle string format like ".235"
+            if isinstance(avg_str, str) and avg_str.startswith('.'):
+                avg = float(avg_str)
+            else:
+                avg = float(avg_str) if avg_str else 0
 
             # MLB average is .240
             if avg > 0.300:
@@ -242,31 +330,27 @@ class MLBDataService:
 
         return ". ".join(contexts)
 
-    def _format_advanced_metrics(self, hitting: Dict, pitching: Dict, is_pitcher: bool) -> str:
+    def _format_advanced_metrics(self, hitting: Dict, recent_data: Dict, is_pitcher: bool) -> str:
         """Format advanced metrics string"""
         metrics = []
 
-        if is_pitcher and pitching:
-            whip = pitching.get("whip", 0)
-            if whip:
-                metrics.append(f"WHIP: {whip:.2f}")
-
-            bb9 = pitching.get("walksPer9Inn", 0)
-            if bb9:
-                metrics.append(f"BB/9: {bb9:.1f}")
+        if is_pitcher:
+            # For pitchers, we'd need to get pitching stats separately
+            # For now, skip pitcher-specific advanced metrics
+            pass
 
         elif hitting:
-            ops = hitting.get("ops", 0)
-            if ops:
-                metrics.append(f"OPS: {ops:.3f}")
+            ops = hitting.get("ops", "0")
+            if ops and ops != "0":
+                metrics.append(f"OPS: {ops}")
 
-            obp = hitting.get("obp", 0)
-            if obp:
-                metrics.append(f"OBP: {obp:.3f}")
+            obp = hitting.get("obp", "0")
+            if obp and obp != "0":
+                metrics.append(f"OBP: {obp}")
 
-            slg = hitting.get("slg", 0)
-            if slg:
-                metrics.append(f"SLG: {slg:.3f}")
+            slg = hitting.get("slg", "0")
+            if slg and slg != "0":
+                metrics.append(f"SLG: {slg}")
 
         return ", ".join(metrics) if metrics else "Advanced metrics unavailable"
 

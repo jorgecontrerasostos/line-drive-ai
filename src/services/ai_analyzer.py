@@ -70,7 +70,7 @@ class BaseballAnalyzer:
 
         current_date = datetime.now().strftime("%B %Y")
 
-        prompt = """
+        prompt = f"""
         You are a professional baseball analyst with expertise in modern analytics and player evaluation. Analyze this player's current performance:
 
         Player: {player_name.title()}

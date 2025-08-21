@@ -146,3 +146,5 @@ cython_debug/
 
 # claude
 .claude_code
+
+.DS_Store

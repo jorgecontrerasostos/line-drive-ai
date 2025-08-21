@@ -234,6 +234,7 @@ class MLBDataService:
             
             return {
                 "games": len(recent_games),
+                "attempted": 10,
                 "avg": avg,
                 "hr": total_hr,
                 "rbi": total_rbi,
@@ -250,6 +251,7 @@ class MLBDataService:
             return "Recent game data not available"
 
         games = recent_data.get("games", 0)
+        attempted = recent_data.get("attempted", 0)
 
         if games == 0:
             return "No recent games found"
@@ -262,8 +264,13 @@ class MLBDataService:
             rbi = recent_data.get("rbi", 0)
             hits = recent_data.get("hits", 0)
             ab = recent_data.get("ab", 0)
+        
+            if games < attempted:
+                missing = attempted - games
+                return f"Last {games} games ({missing} games unavailable): .{int(avg*1000):03d} avg, {hr} HR, {rbi} RBI, {hits}/{ab} H/AB"
+            else:
+                return f"Last {games} games of {attempted} attempted: .{int(avg*1000):03d} avg, {hr} HR, {rbi} RBI, {hits}/{ab} H/AB"
 
-            return f"Last {games} games: .{int(avg*1000):03d} avg, {hr} HR, {rbi} RBI, {hits}/{ab} H/AB"
 
     def _format_season_stats(self, hitting: Dict, pitching: Dict, is_pitcher: bool) -> str:
         current_year = datetime.now().year

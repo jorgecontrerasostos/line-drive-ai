@@ -262,7 +262,7 @@ class BaseballAnalyzer:
                         avg = avg_match.group(1)
                         return f"{player_name} is batting {avg} this season. Full stats: {season_stats}"
                 
-                elif any(keyword in question_lower for keyword in ['rbi', 'runs batted']):
+                elif any(keyword in question_lower for keyword in ['rbi', 'runs batted in', 'runs batted']):
                     rbi_match = re.search(r'(\d+) RBI', season_stats)
                     if rbi_match:
                         rbi = rbi_match.group(1)

@@ -159,6 +159,56 @@ class BaseballAnalyzer:
         
         return "Unable to generate analysis after multiple attempts"
 
+    def _extract_player_names(self, question: str, data_service) -> list:
+        """
+        Extract and validate player names from the question using MLB search API
+        
+        Args:
+            question: User's question text
+            data_service: MLBDataService instance for validation
+            
+        Returns:
+            List of confirmed player names
+        """
+        import re
+        
+        # Method 1: Try to find obvious name patterns (capitalized words)
+        name_matches = re.findall(r'[A-Z][a-z]+ [A-Z][a-z]+(?:\s+[A-Z][a-z]+)*', question)
+        potential_names = [name.strip() for name in name_matches]
+        
+        # Method 2: For lowercase questions, check adjacent word pairs
+        words = question.split()
+        for i in range(len(words) - 1):
+            # Check two-word combinations
+            name_candidate = f"{words[i]} {words[i+1]}".title()
+            if name_candidate not in potential_names:
+                potential_names.append(name_candidate)
+            
+            # Check three-word combinations (for names like "Vladimir Guerrero Jr")
+            if i < len(words) - 2:
+                three_word_name = f"{words[i]} {words[i+1]} {words[i+2]}".title()
+                if three_word_name not in potential_names:
+                    potential_names.append(three_word_name)
+        
+        # Validate each potential name with MLB search API
+        confirmed_players = []
+        for name in potential_names:
+            # Skip common non-name words
+            if name.lower() in ['home runs', 'batting average', 'runs batted', 'how many', 'what is', 'who has']:
+                continue
+                
+            try:
+                search_results = data_service.search_players(name)
+                if search_results:  # If MLB API finds results, it's a real player
+                    confirmed_players.append(name)
+                    if len(confirmed_players) >= 2:  # Limit to 2 players max
+                        break
+            except Exception as e:
+                logger.warning(f"Error searching for player '{name}': {e}")
+                continue
+        
+        return confirmed_players
+
     def _answer_baseball_question(self, question: str) -> str:
         """
         Answer natural language questions about baseball players by:
@@ -173,27 +223,11 @@ class BaseballAnalyzer:
             
             data_service = MLBDataService()
             
-            # Simple regex to find player names in common formats
-            player_patterns = [
-                r'aaron judge', r'mike trout', r'shohei ohtani', r'mookie betts',
-                r'ronald acuna', r'vladimir guerrero', r'juan soto', r'freddie freeman',
-                r'jose altuve', r'manny machado', r'fernando tatis', r'corey seager'
-            ]
-            
-            found_players = []
-            question_lower = question.lower()
-            
-            for pattern in player_patterns:
-                if pattern in question_lower:
-                    found_players.append(pattern.title())
-            
-            # If no known players found, try to extract any capitalized names
-            if not found_players:
-                name_matches = re.findall(r'[A-Z][a-z]+ [A-Z][a-z]+', question)
-                found_players = name_matches[:2]  # Limit to 2 players max
+            # Extract player names using our new dynamic method
+            found_players = self._extract_player_names(question, data_service)
             
             if not found_players:
-                return "I couldn't identify any player names in your question. Please mention a specific player like 'Aaron Judge' or 'Mike Trout'."
+                return "I couldn't identify any player names in your question. Please mention a specific player name (e.g., 'aaron judge', 'Mike Trout', 'shohei ohtani')."
             
             # Fetch data for the identified players
             player_data = {}
@@ -203,10 +237,10 @@ class BaseballAnalyzer:
                     player_data[player_name] = data
             
             if not player_data:
-                return f"I couldn't find data for the players mentioned: {', '.join(found_players)}"
+                return f"I couldn't find current data for: {', '.join(found_players)}. They might not be active players or the name might need adjustment."
             
-            # For now, provide direct answers without AI to avoid timeout issues
-            # Later we can add back the AI processing
+            # Provide direct answers with extracted stats
+            question_lower = question.lower()
             
             if len(player_data) == 1:
                 player_name = list(player_data.keys())[0]

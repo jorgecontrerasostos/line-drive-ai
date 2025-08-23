@@ -172,41 +172,86 @@ class BaseballAnalyzer:
         """
         import re
         
+        logger.warning(f"DEBUG: Extracting names from question: '{question}'")
+        
         # Method 1: Try to find obvious name patterns (capitalized words)
         name_matches = re.findall(r'[A-Z][a-z]+ [A-Z][a-z]+(?:\s+[A-Z][a-z]+)*', question)
         potential_names = [name.strip() for name in name_matches]
+        logger.warning(f"DEBUG: Method 1 (capitalized) found: {potential_names}")
         
         # Method 2: For lowercase questions, check adjacent word pairs
-        words = question.split()
+        # First, clean punctuation from words
+        import string
+        words = [word.strip(string.punctuation) for word in question.split()]
+        logger.warning(f"DEBUG: Split words (cleaned): {words}")
+        
         for i in range(len(words) - 1):
+            # Skip empty words after punctuation removal
+            if not words[i] or not words[i+1]:
+                continue
+                
             # Check two-word combinations
             name_candidate = f"{words[i]} {words[i+1]}".title()
             if name_candidate not in potential_names:
                 potential_names.append(name_candidate)
             
             # Check three-word combinations (for names like "Vladimir Guerrero Jr")
-            if i < len(words) - 2:
+            if i < len(words) - 2 and words[i+2]:
                 three_word_name = f"{words[i]} {words[i+1]} {words[i+2]}".title()
                 if three_word_name not in potential_names:
                     potential_names.append(three_word_name)
         
+        logger.warning(f"DEBUG: All potential names: {potential_names}")
+        
         # Validate each potential name with MLB search API
         confirmed_players = []
+        
+        # Expanded stop words - common phrases that are definitely not player names
+        stop_phrases = [
+            # Baseball terms
+            'home runs', 'batting average', 'runs batted', 'earned run', 'run average',
+            # Question words
+            'how many', 'what is', 'who has', 'can you', 'do you', 'will you',
+            # Common verbs + pronouns  
+            'you do', 'do you', 'you can', 'can you', 'you analyze', 'analyze you',
+            'do connor', 'can trevor', 'you trevor', 'analyze trevor', 'trevor analyze',
+            # Common sentence starters
+            'now can', 'can now', 'now you', 'you now', 'then can', 'can then',
+            # Single common words (when they appear in 2-word combos with names)
+            'the', 'and', 'but', 'for', 'with', 'about', 'now', 'then', 'can', 'you', 'do', 'will', 'would', 'please', 'thank you', 'thank'
+        ]
+        
         for name in potential_names:
-            # Skip common non-name words
-            if name.lower() in ['home runs', 'batting average', 'runs batted', 'how many', 'what is', 'who has']:
+            name_lower = name.lower()
+            
+            # Skip exact matches from stop phrases
+            if name_lower in stop_phrases:
+                logger.warning(f"DEBUG: Skipping exact stop phrase: '{name}'")
                 continue
+            
+            # Skip patterns: common_verb + potential_name  
+            words_in_name = name_lower.split()
+            if len(words_in_name) == 2:
+                first_word = words_in_name[0]
+                # Skip if starts with common command words
+                if first_word in ['do', 'can', 'will', 'would', 'please', 'now', 'then', 'you']:
+                    logger.warning(f"DEBUG: Skipping command pattern: '{name}'")
+                    continue
                 
+            logger.warning(f"DEBUG: Searching MLB API for: '{name}'")
             try:
                 search_results = data_service.search_players(name)
+                logger.warning(f"DEBUG: MLB API returned {len(search_results) if search_results else 0} results for '{name}'")
                 if search_results:  # If MLB API finds results, it's a real player
                     confirmed_players.append(name)
+                    logger.warning(f"DEBUG: Confirmed player: '{name}'")
                     if len(confirmed_players) >= 2:  # Limit to 2 players max
                         break
             except Exception as e:
                 logger.warning(f"Error searching for player '{name}': {e}")
                 continue
         
+        logger.warning(f"DEBUG: Final confirmed players: {confirmed_players}")
         return confirmed_players
 
     def _answer_baseball_question(self, question: str) -> str:
